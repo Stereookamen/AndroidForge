@@ -1,4 +1,7 @@
 name: Build Android APK
+env:
+  META_GITHUB_TOKEN: ${{ secrets.META_GITHUB_TOKEN }}
+
 
 # AndroidForge — Universal Android APK Builder
 #
