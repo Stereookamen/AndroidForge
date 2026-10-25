@@ -1,7 +1,4 @@
 name: Build Android APK
-env:
-  META_GITHUB_TOKEN: ${{ secrets.META_GITHUB_TOKEN }}
-
 
 # AndroidForge — Universal Android APK Builder
 #
@@ -88,7 +85,9 @@ concurrency:
   group: androidforge-build-${{ github.ref }}-${{ github.event.inputs.zip_source || 'auto' }}
   cancel-in-progress: false
 
-env:
+env: 
+  META_GITHUB_TOKEN: ${{ secrets.META_GITHUB_TOKEN }}
+
   # These point to paths baked into the Docker image.
   ANDROID_HOME: /opt/android-sdk
   ANDROID_SDK_ROOT: /opt/android-sdk
