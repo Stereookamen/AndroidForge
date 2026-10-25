@@ -142,44 +142,66 @@ def normalize_java_version(raw: str | None) -> str | None:
 
 
 def find_project_root(extract_dir: Path) -> Path:
-    """Locate the real project root inside an extracted ZIP tree.
 
-    ZIPs are frequently structured as ``MyProject/`` → ``MyProject/settings.gradle``,
-    so we look one or two levels deep for the first directory containing a
-    settings.gradle / pubspec.yaml / build.gradle.
-    """
+def find_project_root(extract_dir: Path) -> Path:
+    """Locate the actual Android or Flutter project root inside an extracted ZIP."""
     candidates: list[Path] = []
 
     def scan(d: Path, depth: int = 0) -> None:
-        if depth > 3:
+        if depth > 5 or not d.is_dir():
             return
-        has_settings = (d / "settings.gradle").exists() or (d / "settings.gradle.kts").exists()
-        has_pubspec = (d / "pubspec.yaml").exists()
-        has_build_gradle = (d / "build.gradle").exists() or (d / "build.gradle.kts").exists()
+
+        has_settings = (
+            (d / "settings.gradle").is_file()
+            or (d / "settings.gradle.kts").is_file()
+        )
+        has_pubspec = (d / "pubspec.yaml").is_file()
+
         if has_settings or has_pubspec:
             candidates.append(d)
             return
-        if has_build_gradle and depth > 0:
-            candidates.append(d)
-            return
+
         for sub in d.iterdir():
             if not sub.is_dir():
                 continue
             if sub.name.startswith(".") or sub.name in {
-                "build", "gradle", ".gradle", "__MACOSX", "node_modules", ".idea"
+                "build", "gradle", ".gradle", "__MACOSX",
+                "node_modules", ".idea"
             }:
                 continue
             scan(sub, depth + 1)
 
     scan(extract_dir)
+
+    # Prefer the CyanBridge Android application over sibling Gradle builds.
+    preferred_roots = [
+        extract_dir / "android" / "CyanBridge",
+        extract_dir / "Alternative-HeyCyan-App-and-SDK-2.3.0"
+        / "android" / "CyanBridge",
+        extract_dir / "CyanBridge",
+    ]
+
+    for root in preferred_roots:
+        if root.is_dir() and (
+            (root / "settings.gradle").is_file()
+            or (root / "settings.gradle.kts").is_file()
+        ):
+            return root
+
     if not candidates:
         return extract_dir
-    # Prefer settings.gradle / pubspec.yaml over build.gradle-only matches
-    for c in candidates:
-        if (c / "settings.gradle").exists() or (c / "settings.gradle.kts").exists() or (c / "pubspec.yaml").exists():
-            return c
-    return candidates[0]
 
+    # Prefer a Gradle project that contains an Android app module.
+    for root in candidates:
+        app_dir = root / "app"
+        if app_dir.is_dir() and (
+            (app_dir / "build.gradle").is_file()
+            or (app_dir / "build.gradle.kts").is_file()
+        ):
+            return root
+
+    # Fall back to the first detected Gradle/Flutter project.
+    return candidates[0]
 
 def parse_gradle_wrapper(root: Path) -> dict[str, Any]:
     """Inspect gradle/wrapper/gradle-wrapper.properties for the Gradle version."""
