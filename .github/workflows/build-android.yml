@@ -1,24 +1,7 @@
 name: Build Android APK
 
-# AndroidForge — Universal Android APK Builder
-#
-# This workflow uses the PREBUILT Docker image published to GHCR by
-# .github/workflows/build-android-image.yml, so it does NOT reinstall
-# the JDK / Android SDK / Gradle / Flutter on every run. The image is:
-#   ghcr.io/<owner>/androidforge-build-env:latest
-#
-# Workflow:
-#   1. Acquire source ZIP (input/ dir, public URL, or GitHub Release asset)
-#   2. Extract ZIP to a clean workspace
-#   3. Detect project type (Gradle / Flutter / multi-module / etc.)
-#   4. Configure toolchain (JDK / Gradle / NDK / Flutter) based on detection
-#   5. Switch JAVA_HOME to the detected JDK version (all JDKs are in the image)
-#   6. Install ONLY missing project-specific Android SDK components
-#   7. Install NDK only if the project uses native code
-#   8. Build the project (assembleDebug / assembleRelease / bundleDebug)
-#   9. Collect generated APKs and pick the primary one
-#  10. Upload APK as a GitHub Actions artifact + publish to release
-#  11. On failure, run automated diagnosis
+# AndroidForge: build the selected source ZIP using a compatible toolchain.
+# Fixed: AGP 8.8.x requires Gradle 8.10.2 (system Gradle 8.9 is too old).
 
 on:
   workflow_dispatch:
@@ -27,55 +10,42 @@ on:
         description: "Where should the workflow get the source ZIP from?"
         type: choice
         required: true
-        default: "input-directory"
+        default: input-directory
         options:
-          - "input-directory"
-          - "download-url"
-          - "release-asset"
+          - input-directory
+          - download-url
+          - release-asset
       zip_path:
-        description: "Exact path (relative to repo root) of the source ZIP in input/. Required when zip_source=input-directory and multiple ZIPs are present — otherwise the build picks the wrong one."
-        required: false
+        description: "Exact path to source ZIP in input/, for example input/web-build-123-project.zip"
         type: string
+        required: false
         default: ""
       zip_url:
-        description: "Direct download URL (only used if 'download-url' is selected)"
-        required: false
+        description: "Direct ZIP download URL (only with download-url)"
         type: string
+        required: false
         default: ""
       release_tag:
-        description: "GitHub Release tag containing the ZIP (only used if 'release-asset' is selected)"
-        required: false
+        description: "Release tag containing the source ZIP (only with release-asset)"
         type: string
+        required: false
         default: ""
       build_variant:
-        description: "Build variant to produce"
+        description: Build variant
         type: choice
         required: true
-        default: "auto"
+        default: auto
         options:
-          - "auto"
-          - "debug"
-          - "release"
-          - "bundle"
+          - auto
+          - debug
+          - release
+          - bundle
       enable_ndk:
-        description: "Install NDK even if no native code is detected (force-true)"
+        description: "Install NDK even when not detected"
         type: boolean
         required: false
         default: false
-  # NOTE: We intentionally do NOT have a `push.paths: input/**.zip`
-  # trigger. The Pages UI commits the ZIP to input/ AND triggers
-  # workflow_dispatch — if both triggers were active, every UI build
-  # would fire TWO workflow runs (one from the push, one from the
-  # dispatch). Removing the push trigger means only workflow_dispatch
-  # fires, so users get exactly one build per click.
-  # If you want to build via git push, trigger the workflow manually
-  # from the Actions tab after pushing.
 
-# Never expose secrets to the (untrusted) uploaded source ZIP.
-# contents:write is required so the GITHUB_TOKEN can upload the built APK
-# back to the source release as an asset — that's what lets the Pages UI
-# offer a direct download link (no CORS issues, no auth header dance).
-# packages:read lets the workflow pull the prebuilt Docker image from GHCR.
 permissions:
   contents: write
   actions: write
@@ -85,38 +55,19 @@ concurrency:
   group: androidforge-build-${{ github.ref }}-${{ github.event.inputs.zip_source || 'auto' }}
   cancel-in-progress: false
 
-env: 
-  META_GITHUB_TOKEN: ${{ secrets.META_GITHUB_TOKEN }}
-
-  # These point to paths baked into the Docker image.
+env:
   ANDROID_HOME: /opt/android-sdk
   ANDROID_SDK_ROOT: /opt/android-sdk
   JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
   GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.caching=false"
   PYTHONUNBUFFERED: "1"
 
-# Use the prebuilt image so we don't reinstall JDK + Android SDK + Gradle +
-# Flutter on every single build. The image is built by
-# .github/workflows/build-android-image.yml and lives at:
-#   ghcr.io/<owner>/androidforge-build-env:latest
-# If the image is missing (first-ever run before the image build has run),
-# this workflow will fail with a clear "image not found" error — the fix is
-# to run the "Build & Publish Android Image" workflow once.
 jobs:
   build:
     name: Build APK
     runs-on: ubuntu-latest
-    # The image is published by build-android-image.yml to GHCR.
-    # GHCR normalizes the image name to lowercase, so we use the lowercase
-    # owner here. If you fork the repo, update this to your-lowercase-username
-    # OR override the env var IMAGE_REF below.
     container: ghcr.io/professional-x/androidforge-build-env:latest
     timeout-minutes: 60
-    outputs:
-      project_type: ${{ steps.detect.outputs.project_type }}
-      build_succeeded: ${{ steps.build.outputs.build_succeeded }}
-      apk_count: ${{ steps.collect.outputs.apk_count }}
-      primary_apk_name: ${{ steps.collect.outputs.primary_apk_name }}
 
     steps:
       - name: Checkout repository
@@ -124,16 +75,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Python is already installed in the Docker image — but we still need
-      # to install the project's specific Python deps (PyYAML).
       - name: Install Python dependencies
         run: |
           python3 -m pip install --upgrade pip --quiet
           python3 -m pip install -r scripts/requirements.txt --quiet
 
-      # ---------------------------------------------------------------------
-      # Step 1: Acquire ZIP
-      # ---------------------------------------------------------------------
       - name: Acquire source ZIP
         id: acquire
         run: |
@@ -143,29 +89,18 @@ jobs:
             --tag "${{ inputs.release_tag }}" \
             --path "${{ inputs.zip_path }}"
 
-      # ---------------------------------------------------------------------
-      # Step 2: Extract ZIP
-      # ---------------------------------------------------------------------
       - name: Extract source ZIP
         id: extract
         run: python3 scripts/extract_zip.py --zip "${{ steps.acquire.outputs.zip_path }}"
 
-      # ---------------------------------------------------------------------
-      # Step 3: Detect project (writes detection.json)
-      # ---------------------------------------------------------------------
       - name: Detect project type
         id: detect
         run: |
           python3 scripts/detect_project.py \
             --root "${{ steps.extract.outputs.project_root }}" \
             --output detection.json
-          echo "::group::Detection JSON"
           cat detection.json
-          echo "::endgroup::"
 
-      # ---------------------------------------------------------------------
-      # Step 4: Configure toolchain (writes toolchain.json)
-      # ---------------------------------------------------------------------
       - name: Configure toolchain
         id: toolchain
         run: |
@@ -174,14 +109,9 @@ jobs:
             --detect detection.json \
             --android-sdk "$ANDROID_HOME" \
             --output toolchain.json
-          echo "::group::Toolchain JSON"
           cat toolchain.json
-          echo "::endgroup::"
 
-      # ---------------------------------------------------------------------
-      # Step 4b: Self-healing system (auto-fixes common project issues)
-      # ---------------------------------------------------------------------
-      - name: Self-heal project (auto-fix common issues)
+      - name: Self-heal project
         id: self_heal
         run: |
           python3 scripts/self_heal.py \
@@ -190,89 +120,46 @@ jobs:
             --toolchain toolchain.json \
             --android-sdk "$ANDROID_HOME" \
             --output self_heal.json
-          echo "::group::Self-heal report"
           cat self_heal.json
-          echo "::endgroup::"
 
-      # ---------------------------------------------------------------------
-      # Step 5: Switch JAVA_HOME to the detected JDK version
-      # (No actions/setup-java needed — all JDKs are in the Docker image.)
-      # ---------------------------------------------------------------------
-      - name: Switch JAVA_HOME to detected version
+      - name: Switch to project JDK
         run: |
-          JDK_VER="${{ steps.toolchain.outputs.jdk_version }}"
-          case "$JDK_VER" in
+          case "${{ steps.toolchain.outputs.jdk_version }}" in
             8)  NEW_JH=/usr/lib/jvm/java-8-openjdk-amd64 ;;
             11) NEW_JH=/usr/lib/jvm/java-11-openjdk-amd64 ;;
-            17) NEW_JH=/usr/lib/jvm/java-17-openjdk-amd64 ;;
-            21) NEW_JH=/usr/lib/jvm/java-17-openjdk-amd64 ;;  # fallback (no JDK 21 in image yet)
-            *)  echo "Unknown JDK version: $JDK_VER — defaulting to JDK 17"
-                NEW_JH=/usr/lib/jvm/java-17-openjdk-amd64 ;;
+            17|21|*) NEW_JH=/usr/lib/jvm/java-17-openjdk-amd64 ;;
           esac
-          echo "Switching JAVA_HOME from $JAVA_HOME → $NEW_JH"
           echo "JAVA_HOME=$NEW_JH" >> "$GITHUB_ENV"
           echo "$NEW_JH/bin" >> "$GITHUB_PATH"
-          # Sanity check
-          java -version
+          "$NEW_JH/bin/java" -version
 
-      # ---------------------------------------------------------------------
-      # Step 6: Install MISSING project-specific Android SDK components
-      # (Common platforms + build-tools are already in the Docker image —
-      # we only install what the project requires that ISN'T already there.)
-      # ---------------------------------------------------------------------
       - name: Install missing Android SDK components
         run: |
-          # Determine what the project needs from detection.json + toolchain.json
           NEEDS_NDK="${{ steps.toolchain.outputs.needs_ndk }}"
           NDK_VER="${{ steps.toolchain.outputs.ndk_version }}"
-          COMPILE_SDK=$(python3 -c "import json; d=json.load(open('detection.json')); v=d.get('versions',{}).get('compile_sdk'); print(v if v else '')")
-          echo "Project compileSdk=$COMPILE_SDK"
-          # If the project's compileSdk isn't in our image, install it.
-          if [ -n "$COMPILE_SDK" ]; then
-            if [ ! -d "$ANDROID_HOME/platforms/android-$COMPILE_SDK" ]; then
-              echo "Installing missing platform: platforms;android-$COMPILE_SDK"
-              yes | sdkmanager "platforms;android-$COMPILE_SDK" || true
-            else
-              echo "✓ platforms;android-$COMPILE_SDK already present"
-            fi
+          COMPILE_SDK=$(python3 -c 'import json; d=json.load(open("detection.json")); print(d.get("versions",{}).get("compile_sdk") or "")')
+          if [ -n "$COMPILE_SDK" ] && [ ! -d "$ANDROID_HOME/platforms/android-$COMPILE_SDK" ]; then
+            echo "Installing Android platform $COMPILE_SDK"
+            yes | sdkmanager "platforms;android-$COMPILE_SDK" || true
           fi
-          # Always make sure platform-tools + a default build-tools are present
-          # (the Docker image already has them, but this is a no-op safety check).
           yes | sdkmanager "platform-tools" >/dev/null 2>&1 || true
-          # Install NDK if the project uses native code
-          if [ "$NEEDS_NDK" = "true" ] || [ "${{ github.event.inputs.enable_ndk }}" = "true" ]; then
+          if [ "$NEEDS_NDK" = "true" ] || [ "${{ inputs.enable_ndk }}" = "true" ]; then
             if [ -n "$NDK_VER" ] && [ ! -d "$ANDROID_HOME/ndk/$NDK_VER" ]; then
-              echo "Installing NDK: ndk;$NDK_VER"
-              yes | sdkmanager "ndk;$NDK_VER" || echo "WARNING: NDK install failed"
-            else
-              echo "✓ NDK $NDK_VER already present (or not specified)"
+              yes | sdkmanager "ndk;$NDK_VER" || true
             fi
             yes | sdkmanager "cmake;3.22.1" >/dev/null 2>&1 || true
           fi
 
-      # ---------------------------------------------------------------------
-      # Step 7: Switch Flutter version if the project needs a different one
-      # (Flutter 3.27.0 is already in the Docker image as the default.)
-      # ---------------------------------------------------------------------
-      - name: Switch Flutter version (if needed)
+      - name: Switch Flutter version if needed
         if: steps.toolchain.outputs.needs_flutter == 'true'
         run: |
           DETECTED="${{ steps.toolchain.outputs.flutter_version }}"
           CURRENT=$(flutter --version | head -1 | awk '{print $4}')
-          echo "Project Flutter version: $DETECTED, image version: $CURRENT"
-          if [ "$DETECTED" != "$CURRENT" ] && [ -n "$DETECTED" ]; then
-            echo "Project wants Flutter $DETECTED — installing via the Flutter version manager..."
+          if [ -n "$DETECTED" ] && [ "$DETECTED" != "$CURRENT" ]; then
             flutter downgrade "$DETECTED" 2>/dev/null || flutter --version "$DETECTED" 2>/dev/null || true
-            flutter --version
-          else
-            echo "✓ Flutter $CURRENT already satisfies the project"
           fi
-          # Make sure desktop + android are enabled
           flutter config --enable-linux-desktop --enable-windows-desktop --enable-macos-desktop || true
 
-      # ---------------------------------------------------------------------
-      # Step 8: Restore Gradle cache (per-project, across workflow runs)
-      # ---------------------------------------------------------------------
       - name: Restore Gradle cache
         if: steps.toolchain.outputs.needs_gradle == 'true'
         uses: actions/cache@v4
@@ -286,10 +173,7 @@ jobs:
             gradle-${{ steps.toolchain.outputs.gradle_version }}-
             gradle-
 
-      # ---------------------------------------------------------------------
-      # Step 9: Restore Flutter/Dart cache (for Flutter projects)
-      # ---------------------------------------------------------------------
-      - name: Restore Flutter pub cache
+      - name: Restore Flutter cache
         if: steps.toolchain.outputs.needs_flutter == 'true'
         uses: actions/cache@v4
         with:
@@ -298,38 +182,53 @@ jobs:
           restore-keys: |
             flutter-pub-
 
-      # ---------------------------------------------------------------------
-      # Step 10: Verify standalone Gradle (used if wrapper is missing)
-      # (Gradle 8.9 is already in the Docker image at /opt/gradle/bin/gradle)
-      # ---------------------------------------------------------------------
-      - name: Verify standalone Gradle (fallback)
+      # The system image has Gradle 8.9. For newer AGP projects, this
+      # downloads the minimum compatible Gradle and puts it first on PATH.
+      - name: Select compatible Gradle version
         if: steps.toolchain.outputs.use_wrapper == 'false'
+        shell: bash
         run: |
-          GRADLE_VER="${{ steps.toolchain.outputs.gradle_version }}"
-          echo "Image has Gradle 8.9 system-wide at /opt/gradle/bin/gradle"
-          which gradle
-          gradle --version | head -3
-          # The image's system gradle (8.9) is new enough for any AGP 8.x.
-          # Only download a DIFFERENT version if the project needs an older
-          # one (rare — happens for AGP <= 7.x which requires gradle 7.x).
-          # Otherwise, trust the image's gradle and let the build use it.
-          if [ -n "$GRADLE_VER" ] && [ "$GRADLE_VER" != "8.9" ] && [ "$GRADLE_VER" != "8.0" ]; then
-            # Only download if the requested version is older than 8.9 (e.g. 7.5 for AGP 7.4).
-            # For newer Gradle requirements (8.7, 8.10), the image's 8.9 satisfies them.
-            REQ_MAJOR=$(echo "$GRADLE_VER" | cut -d. -f1)
-            if [ "$REQ_MAJOR" -lt 8 ]; then
-              echo "Project wants older Gradle $GRADLE_VER — downloading..."
-              wget -q "https://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip" -O /tmp/gradle.zip
-              unzip -q /tmp/gradle.zip -d /opt
-              echo "/opt/gradle-${GRADLE_VER}/bin" >> "$GITHUB_PATH"
-            else
-              echo "✓ Image's Gradle 8.9 satisfies the project's requirement of $GRADLE_VER+"
+          set -euo pipefail
+          REQUIRED=$(python3 - <<'PY'
+          import json, re
+          t = json.load(open('toolchain.json', encoding='utf-8'))
+          selected = str(t.get('gradle_version') or '8.9')
+          agp = str(t.get('agp_version') or '')
+          match = re.match(r'^(\d+)\.(\d+)', agp)
+          family = f'{match.group(1)}.{match.group(2)}' if match else ''
+          minimum = {
+              '8.0': '8.0', '8.1': '8.0', '8.2': '8.2.1',
+              '8.3': '8.4', '8.4': '8.6', '8.5': '8.7',
+              '8.6': '8.7', '8.7': '8.9', '8.8': '8.10.2',
+              '8.9': '8.11.1', '8.10': '8.11.1',
+              '8.11': '8.13', '8.12': '8.13',
+          }.get(family)
+          def parts(v):
+              return tuple(int(n) for n in re.findall(r'\d+', v)[:3])
+          if minimum and parts(selected) < parts(minimum):
+              selected = minimum
+          print(selected)
+          PY
+          )
+          CURRENT=$(gradle --version | awk '/^Gradle / {print $2; exit}')
+          echo "Detected AGP: ${{ steps.toolchain.outputs.agp_version }}"
+          echo "Required Gradle: $REQUIRED; installed system Gradle: $CURRENT"
+          if [ "$REQUIRED" != "$CURRENT" ]; then
+            TARGET="/opt/gradle-$REQUIRED"
+            if [ ! -x "$TARGET/bin/gradle" ]; then
+              echo "Downloading Gradle $REQUIRED from services.gradle.org"
+              curl --fail --location --retry 3 --silent --show-error \
+                "https://services.gradle.org/distributions/gradle-${REQUIRED}-bin.zip" \
+                --output /tmp/androidforge-gradle.zip
+              unzip -q /tmp/androidforge-gradle.zip -d /opt
+              rm -f /tmp/androidforge-gradle.zip
             fi
+            test -x "$TARGET/bin/gradle"
+            echo "$TARGET/bin" >> "$GITHUB_PATH"
+            export PATH="$TARGET/bin:$PATH"
           fi
+          gradle --version | head -3
 
-      # ---------------------------------------------------------------------
-      # Step 11: Build the project (writes build.json)
-      # ---------------------------------------------------------------------
       - name: Build project
         id: build
         continue-on-error: true
@@ -341,15 +240,11 @@ jobs:
             --variant "${{ inputs.build_variant || 'auto' }}" \
             --log-dir "$GITHUB_WORKSPACE/.androidforge/logs" \
             --output "$GITHUB_WORKSPACE/build.json" || true
-          # Always emit a minimal build.json if the script didn't write one
           if [ ! -f "$GITHUB_WORKSPACE/build.json" ]; then
             echo '{"build_succeeded": false, "successful_command": null, "exit_code": -1, "log_file": null}' > "$GITHUB_WORKSPACE/build.json"
           fi
           cat "$GITHUB_WORKSPACE/build.json"
 
-      # ---------------------------------------------------------------------
-      # Step 12: Collect APKs (writes collect.json; runs even on build failure)
-      # ---------------------------------------------------------------------
       - name: Collect APKs
         id: collect
         if: always()
@@ -364,9 +259,6 @@ jobs:
           fi
           cat "$GITHUB_WORKSPACE/collect.json"
 
-      # ---------------------------------------------------------------------
-      # Step 13: Upload APK artifact
-      # ---------------------------------------------------------------------
       - name: Upload APK artifact
         if: steps.collect.outputs.apk_count != '0' && steps.collect.outputs.apk_count != ''
         uses: actions/upload-artifact@v4
@@ -377,7 +269,7 @@ jobs:
           retention-days: 30
           compression-level: 0
 
-      - name: Upload AAB artifact (if any)
+      - name: Upload AAB artifact
         if: steps.collect.outputs.apk_count != '0' && steps.collect.outputs.apk_count != ''
         uses: actions/upload-artifact@v4
         with:
@@ -386,104 +278,52 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-      # ---------------------------------------------------------------------
-      # Step 14: ALWAYS publish APKs to a fresh output release (tag derived
-      # from the run id, so the Pages UI can fetch it predictably). This
-      # step runs server-side on the GitHub runner — no CORS issues, no
-      # browser uploads. The UI then fetches the release's asset list via
-      # api.github.com (CORS-enabled) and offers direct download links to
-      # the regular GitHub navigation URLs.
-      #
-      # We use the GitHub REST API directly via curl (no `gh` dependency)
-      # because the Docker image doesn't ship `gh` and installing it via
-      # apt requires a GPG key that sometimes fails to import.
-      # ---------------------------------------------------------------------
+      # The Pages UI expects the APK in release web-build-output-<run ID>.
       - name: Publish APKs to output release
         if: always() && steps.collect.outputs.apk_count != '0' && steps.collect.outputs.apk_count != ''
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
+          set -euo pipefail
           TAG="web-build-output-${{ github.run_id }}"
-          REPO_API="https://api.github.com/repos/$GITHUB_REPOSITORY"
-          AUTH_HEADER="Authorization: Bearer $GH_TOKEN"
-          API_VERSION="X-GitHub-Api-Version: 2022-11-28"
+          API="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          AUTH="Authorization: Bearer $GH_TOKEN"
           ACCEPT="Accept: application/vnd.github+json"
-
-          echo "=== Step 1: Create release with tag $TAG ==="
-          # Try to create the release; if it already exists (race with
-          # a previous attempt), we just look it up.
-          RELEASE_RESPONSE=$(curl -sS -X POST \
-            -H "$AUTH_HEADER" -H "$ACCEPT" -H "$API_VERSION" -H "Content-Type: application/json" \
-            "$REPO_API/releases" \
-            -d "{\"tag_name\":\"$TAG\",\"target_commitish\":\"main\",\"name\":\"Build #${{ github.run_number }} output\",\"body\":\"Auto-generated by AndroidForge workflow run ${{ github.run_id }}.\",\"prerelease\":true}")
-          RELEASE_ID=$(echo "$RELEASE_RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
-
-          if [ -z "$RELEASE_ID" ]; then
-            echo "Create-release call didn't return an id — release likely already exists. Looking it up..."
-            RELEASE_ID=$(curl -sS -H "$AUTH_HEADER" -H "$ACCEPT" -H "$API_VERSION" \
-              "$REPO_API/releases/tags/$TAG" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
+          VERSION="X-GitHub-Api-Version: 2022-11-28"
+          BODY="{\"tag_name\":\"$TAG\",\"target_commitish\":\"main\",\"name\":\"Build #${{ github.run_number }} output\",\"body\":\"AndroidForge APK output\",\"prerelease\":true}"
+          RELEASE=$(curl -fsS -X POST -H "$AUTH" -H "$ACCEPT" -H "$VERSION" \
+            -H 'Content-Type: application/json' -d "$BODY" "$API/releases" || true)
+          ID=$(printf '%s' "$RELEASE" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id", ""))' 2>/dev/null || true)
+          if [ -z "$ID" ]; then
+            RELEASE=$(curl -fsS -H "$AUTH" -H "$ACCEPT" -H "$VERSION" "$API/releases/tags/$TAG")
+            ID=$(printf '%s' "$RELEASE" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id", ""))')
           fi
-
-          if [ -z "$RELEASE_ID" ]; then
-            echo "::error::Could not create or find release with tag $TAG"
-            echo "Create-release response: $RELEASE_RESPONSE"
-            exit 1
-          fi
-          echo "  ✓ Release ID: $RELEASE_ID (tag: $TAG)"
-
-          echo "=== Step 2: Upload APKs/AABs to the release ==="
-          cd "$GITHUB_WORKSPACE/output"
+          test -n "$ID"
           shopt -s nullglob
-          UPLOADED=0
-          for f in *.apk *.aab; do
-            [ -e "$f" ] || continue
-            echo "  → Uploading $f ($(stat -c%s "$f" | awk '{printf "%.1f MB", $1/1024/1024}'))..."
-            # Upload via uploads.github.com (different host than api.github.com)
-            UPLOAD_URL="https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$(basename "$f")"
-            HTTP_CODE=$(curl -sS -X POST \
-              -H "$AUTH_HEADER" -H "$ACCEPT" -H "$API_VERSION" -H "Content-Type: application/zip" \
-              --data-binary "@$f" \
-              -o /tmp/upload-response.json -w "%{http_code}" \
-              "$UPLOAD_URL")
-            if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
-              echo "    ✓ uploaded (HTTP $HTTP_CODE)"
-              UPLOADED=$((UPLOADED+1))
-            else
-              echo "    ✗ failed (HTTP $HTTP_CODE)"
-              cat /tmp/upload-response.json | head -3
+          COUNT=0
+          for f in "$GITHUB_WORKSPACE"/output/*.apk "$GITHUB_WORKSPACE"/output/*.aab; do
+            [ -f "$f" ] || continue
+            NAME=$(basename "$f")
+            echo "Uploading $NAME to release $TAG"
+            CODE=$(curl -sS -X POST -H "$AUTH" -H "$ACCEPT" -H "$VERSION" \
+              -H 'Content-Type: application/octet-stream' --data-binary "@$f" \
+              -o /tmp/androidforge-asset-response.json -w '%{http_code}' \
+              "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$ID/assets?name=$NAME")
+            if [ "$CODE" != "201" ] && [ "$CODE" != "200" ]; then
+              echo "::error::Failed to publish $NAME: HTTP $CODE"
+              cat /tmp/androidforge-asset-response.json
+              exit 1
             fi
+            COUNT=$((COUNT + 1))
           done
-
-          echo "=== Step 3: Surface release tag to UI + summary ==="
           echo "output_release_tag=$TAG" >> "$GITHUB_ENV"
-          echo "output_release_tag=$TAG" >> "$GITHUB_OUTPUT"
           {
-            echo "## 📦 Output release"
-            echo ""
-            echo "Tag: \`$TAG\`"
-            echo "URL: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
-            echo ""
-            echo "Assets uploaded: $UPLOADED"
-            echo ""
-            # List the assets via the API for the summary
-            curl -sS -H "$AUTH_HEADER" -H "$ACCEPT" -H "$API_VERSION" \
-              "$REPO_API/releases/$RELEASE_ID" \
-              | python3 -c "
-          import json,sys
-          d = json.load(sys.stdin)
-          print('Assets in release:')
-          for a in d.get('assets', []):
-              print(f\"  - {a['name']} ({a['size']} bytes)\")
-              print(f\"    download: {a['browser_download_url']}\")
-          " || echo "(could not list assets)"
+            echo "## AndroidForge output"
+            echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
+            echo "Uploaded files: $COUNT"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          echo "Done. Release $TAG contains $UPLOADED asset(s)."
-
-      # ---------------------------------------------------------------------
-      # Step 15: Upload build logs (always, for debugging)
-      # ---------------------------------------------------------------------
       - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -497,9 +337,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      # ---------------------------------------------------------------------
-      # Step 16: Diagnose failure (only on build failure)
-      # ---------------------------------------------------------------------
       - name: Diagnose failure
         if: steps.build.outputs.build_succeeded != 'true'
         run: |
@@ -507,9 +344,6 @@ jobs:
             --root "${{ steps.extract.outputs.project_root }}" \
             --log-dir "$GITHUB_WORKSPACE/.androidforge/logs" || true
 
-      # ---------------------------------------------------------------------
-      # Step 17: Build summary (always)
-      # ---------------------------------------------------------------------
       - name: Build summary
         if: always()
         run: |
@@ -518,21 +352,16 @@ jobs:
             --toolchain "$GITHUB_WORKSPACE/toolchain.json" \
             --build "$GITHUB_WORKSPACE/build.json" \
             --collect "$GITHUB_WORKSPACE/collect.json" || true
-          # Also dump the self-heal report into the workflow summary if it exists
           if [ -f "$GITHUB_WORKSPACE/self_heal.json" ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "## 🩹 Self-heal report" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "## Self-heal report" >> "$GITHUB_STEP_SUMMARY"
             echo '```json' >> "$GITHUB_STEP_SUMMARY"
             cat "$GITHUB_WORKSPACE/self_heal.json" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # ---------------------------------------------------------------------
-      # Final: fail the job if the build itself failed
-      # ---------------------------------------------------------------------
       - name: Fail if build failed
         if: steps.build.outputs.build_succeeded != 'true'
         run: |
-          echo "::error::Android build failed. See the diagnosis above and the AndroidForge-logs artifact."
+          echo '::error::Android build failed; see AndroidForge-logs and build summary.'
           exit 1
