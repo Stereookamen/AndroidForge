@@ -1,0 +1,30 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.stereoo.zontface'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.stereoo.zontface'
+        minSdk 26
+        targetSdk 28
+        versionCode 1
+        versionName '1.0.0'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    implementation 'com.google.android.support:wearable:2.9.0'
+    compileOnly 'com.google.android.wearable:wearable:2.9.0'
+}
+
+tasks.register('decodeCarImage') {
+    doLast {
+        def encoded = file('src/main/assets/car.b64').text.replaceAll('\\s', '')
+        file('src/main/assets/car.jpg').bytes = java.util.Base64.getDecoder().decode(encoded)
+    }
+}
+preBuild.dependsOn('decodeCarImage')

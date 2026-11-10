@@ -1,0 +1,32 @@
+name: Build Stereoo ZONT Face Wear OS APK
+on:
+  push:
+    branches: [zont-face-wearos2]
+    paths:
+      - 'zont-face/**'
+      - '.github/workflows/build-zont-face.yml'
+  workflow_dispatch:
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Install Android SDK
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Build APK
+        run: gradle --no-daemon --stacktrace -p zont-face :app:assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Stereoo-ZONT-Face-WearOS2-APK
+          path: zont-face/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
