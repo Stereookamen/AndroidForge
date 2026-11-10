@@ -7,8 +7,8 @@ android {
         applicationId 'com.stereoo.zontface'
         minSdk 26
         targetSdk 28
-        versionCode 2
-        versionName '1.1.0'
+        versionCode 3
+        versionName '1.2.0'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -21,10 +21,3 @@ dependencies {
     compileOnly 'com.google.android.wearable:wearable:2.9.0'
 }
 
-tasks.register('decodeCarImage') {
-    doLast {
-        def encoded = file('src/main/assets/car.b64').text.replaceAll('\\s', '')
-        file('src/main/assets/car.jpg').bytes = java.util.Base64.getDecoder().decode(encoded)
-    }
-}
-preBuild.dependsOn('decodeCarImage')
