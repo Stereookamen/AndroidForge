@@ -149,90 +149,201 @@ public final class FaceService extends CanvasWatchFaceService {
             c.drawPath(p,paint);paint.setStyle(Paint.Style.FILL);
             c.drawCircle(centerX,y+14,1.2f,paint);
         }
+
+        // All coordinates are inside the inscribed circle, even on TicWatch's
+        // real 454x454 AMOLED. No interactive control touches the round edge.
         private void drawActive(Canvas c){
-            // Face rings and subtle shadows.
-            paint.setColor(0xFF010703);paint.setShader(new LinearGradient(0,0,400,400,
-                    0xFF001908,0xFF000201,Shader.TileMode.CLAMP));
-            c.drawCircle(200,200,200,paint);paint.setShader(null);
-            strokeOval(c,0xFF1D3D2A,2,6,6,394,394);
-            strokeOval(c,GREEN,1.8f,12,12,388,388);
-            strokeOval(c,0xFF0B721F,0.8f,17,17,383,383);
-            // Top data row.
-            txt(c,"☁",GREEN,20,50,54,Paint.Align.CENTER,true);
-            String cloud=data==null?"НЕТ ДАННЫХ":data.deviceOnline?"Онлайн":"ZONT API";
-            txt(c,cloud,data!=null?WHITE:0xFFA0A0A0,11,86,52,Paint.Align.CENTER,false);
-            line(c,0xFF237538,1,148,38,148,60);
-            txt(c,"ZONT",WHITE,19,200,54,Paint.Align.CENTER,true);
-            line(c,0xFF237538,1,251,38,251,60);
-            txt(c,"▮▮▮",GREEN,12,290,52,Paint.Align.CENTER,true);
+            paint.setShader(new LinearGradient(0,0,400,400,0xFF031209,0xFF000302,Shader.TileMode.CLAMP));
+            paint.setColor(Color.WHITE);paint.setStyle(Paint.Style.FILL);
+            c.drawCircle(200,200,199,paint);paint.setShader(null);
+            strokeOval(c,0xFF12672C,1.4f,10,10,390,390);
+            strokeOval(c,GREEN,1.8f,14,14,386,386);
+
+            // The top row is inset from the curved edge. The previous v1 row
+            // started at x=50 at y=54, which was OUTSIDE the circle.
+            int leftColor = data == null ? 0xFFFFC060 : (data.deviceOnline ? GREEN : 0xFFFFC060);
+            txt(c,data == null ? "Нет связи" : (data.deviceOnline ? "Онлайн" : "Нет связи"),
+                    leftColor,12,123,61,Paint.Align.CENTER,true);
+            line(c,0xFF206D38,1,162,42,162,67);
+            txt(c,"ZONT",WHITE,22,205,62,Paint.Align.CENTER,true);
+            line(c,0xFF206D38,1,247,42,247,67);
             int battery=charge();
-            strokeOval(c,0xFF9DF0AE,0.9f,307,40,332,54);
-            rect(c,GREEN,310,43,310+Math.max(1,19*Math.max(0,battery)/100f),51,1);
-            txt(c,battery<0?"—":battery+"%",WHITE,12,353,53,Paint.Align.CENTER,false);
-            txt(c,time(),WHITE,55,200,126,Paint.Align.CENTER,true);
-            txt(c,date(),WHITE,19,200,151,Paint.Align.CENTER,false);
-            line(c,0xFF0A6422,1,62,155,115,155);line(c,0xFF0A6422,1,285,155,338,155);
-            // Personal owner's XL7 photograph; tinted via vignette in bundled photo.
-            if(car!=null){
-                paint.setShader(null);paint.setColor(Color.WHITE);paint.setAlpha(255);
-                Rect src=new Rect(0,0,car.getWidth(),car.getHeight());
-                c.drawBitmap(car,src,new RectF(91,165,309,282),paint);
-                // Russian plate customized to the owner's real 2005 XL7.
-                rect(c,0xFFF2F2F2,119,235,169,246,1.4f);
-                txt(c,"X125XP 22",Color.BLACK,7.2f,143.5f,243.3f,Paint.Align.CENTER,true);
-            }
-            // Left telemetry.
-            txt(c,"♨",GREEN,17,38,191,Paint.Align.CENTER,true);
-            txt(c,ZontClient.value(data==null?null:data.engineTemp,"°"),WHITE,24,77,189,Paint.Align.CENTER,true);
-            txt(c,"Двигатель",WHITE,10,77,204,Paint.Align.CENTER,false);
-            line(c,0xFF217D39,0.8f,22,215,114,215);
-            txt(c,"♨",GREEN,17,38,246,Paint.Align.CENTER,true);
-            txt(c,ZontClient.value(data==null?null:data.cabinTemp,"°"),WHITE,24,77,244,Paint.Align.CENTER,true);
-            txt(c,"Салон",WHITE,10,77,258,Paint.Align.CENTER,false);
-            // Right telemetry. Do not show fictitious 12.6 V / 58 L.
-            txt(c,"▣",GREEN,16,337,189,Paint.Align.CENTER,true);
-            txt(c,ZontClient.value(data==null?null:data.voltage,"В"),WHITE,18,342,209,Paint.Align.CENTER,true);
-            line(c,0xFF217D39,0.8f,306,217,383,217);
-            txt(c,"▤",GREEN,17,334,242,Paint.Align.CENTER,true);
-            txt(c,ZontClient.value(data==null?null:data.fuelLiters," л"),WHITE,18,345,261,Paint.Align.CENTER,true);
-            // Overlay true moving hour/minute/second hands, no Roman or Arabic dial numerals.
+            drawBattery(c,263,48,battery);
+            txt(c,battery<0?"—":battery+"%",WHITE,13,309,61,Paint.Align.CENTER,true);
+
+            txt(c,time(),WHITE,54,200,121,Paint.Align.CENTER,true);
+            txt(c,date(),0xFFE5F4E8,18,200,147,Paint.Align.CENTER,true);
+            line(c,0xFF176C2D,1,70,153,118,153);
+            line(c,0xFF176C2D,1,282,153,330,153);
+
+            // Actual owner's vehicle, NOT the garage/road background.
+            // Preserve the car's 4:3 proportions: v1 stretched it to 218:117.
+            drawCutOutCar(c);
+            // Readings are painted after the car, for maximum contrast.
+            drawTelemetry(c);
+
             drawHands(c,false);
-            // Arming status and actions.
-            rect(c,0xFF042A0E,104,287,296,319,16);
-            paint.setColor(data!=null&&data.armedKnown&&data.armed?GREEN:0xFFFFA53C);
-            paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.8f);
-            c.drawRoundRect(new RectF(104,287,296,319),16,16,paint);paint.setStyle(Paint.Style.FILL);
-            boolean armed=data!=null&&data.armedKnown&&data.armed;
-            lockIcon(c,123,292,armed,armed?GREEN:0xFFFFBD6B);
-            String status=data==null?"Подключи ZONT":
-                    !data.armedKnown?"Нет данных охраны":armed?"Под охраной":"Охрана выключена";
-            txt(c,status,WHITE,status.length()>17?13:17,207,309,Paint.Align.CENTER,true);
-            drawButton(c,106,356,"ARM");drawButton(c,200,356,"ENGINE");drawButton(c,294,356,"DISARM");
-            if(error!=null){txt(c,"Данные устарели • открой настройки",0xFFFFB75C,9,200,393,Paint.Align.CENTER,false);}
+            drawSecurity(c);
+            drawAction(c,125,341,"ARM",false);
+            drawAction(c,200,341,"ENGINE",true);
+            drawAction(c,275,341,"DISARM",false);
         }
-        private void drawButton(Canvas c,float x,float y,String type){
-            boolean engine=type.equals("ENGINE");
-            paint.setColor(engine?0xFF033B16:0xFF121D18);paint.setShader(null);
-            c.drawCircle(x,y,32,paint);strokeOval(c,engine?GREEN:0xFF717E76,1.6f,x-32,y-32,x+32,y+32);
-            if(engine){txt(c,"▣",GREEN,32,x,y+11,Paint.Align.CENTER,true);}
-            else lockIcon(c,x,y-10,type.equals("ARM"),WHITE);
+        private void drawBattery(Canvas c,float x,float y,int battery){
+            paint.setShader(null);paint.setColor(0xFFDAFFE0);paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(1.6f);
+            c.drawRoundRect(new RectF(x,y,x+27,y+14),2,2,paint);
+            c.drawRect(x+27,y+4,x+30,y+10,paint);
+            paint.setStyle(Paint.Style.FILL);
+            if(battery>=0){paint.setColor(battery<20?0xFFFFA341:GREEN);
+                c.drawRoundRect(new RectF(x+3,y+3,x+3+21*battery/100f,y+11),1,1,paint);}
         }
+        private void drawCutOutCar(Canvas c){
+            if(car==null)return;
+            float l=84,t=153,w=232,h=174; // Original photo is 280x210: no distortion.
+            final float sx=w/280f,sy=h/210f;
+            // Mask follows the XL7 body rather than putting the photo rectangle
+            // (including red building and road) on the watch face.
+            float[] xy={
+                9,116, 13,103, 27,96, 36,87, 72,74, 86,51, 104,34,
+                131,23, 153,19, 179,17, 211,18, 222,24, 233,24,
+                247,37, 256,54, 260,73, 260,106, 253,128,
+                244,143, 237,154, 220,162, 210,165, 207,179,
+                198,186, 180,187, 170,182, 166,170,
+                151,174, 137,172, 109,166, 80,165,
+                49,166, 27,160, 13,149, 9,136
+            };
+            Path outline=new Path();
+            outline.moveTo(l+xy[0]*sx,t+xy[1]*sy);
+            for(int i=2;i<xy.length;i+=2)outline.lineTo(l+xy[i]*sx,t+xy[i+1]*sy);
+            outline.close();
+            c.save();
+            c.clipPath(outline);
+            paint.setShader(null);paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.WHITE);paint.setAlpha(255);
+            paint.setFilterBitmap(true);
+            c.drawBitmap(car,new Rect(0,0,car.getWidth(),car.getHeight()),
+                    new RectF(l,t,l+w,t+h),paint);
+            c.restore();
+            // Replacement plate, physically on the vehicle, not separate text.
+            rect(c,0xFFF2F2F2,l+41*sx,t+120*sy,l+94*sx,t+134*sy,2);
+            txt(c,"Х125ХР 22",0xFF101010,8.4f,l+67.5f*sx,t+131*sy,Paint.Align.CENTER,true);
+        }
+        private void drawThermometer(Canvas c,float x,float y){
+            paint.setShader(null);paint.setColor(GREEN);paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(2.6f);paint.setStrokeCap(Paint.Cap.ROUND);
+            c.drawRoundRect(new RectF(x-3,y-11,x+3,y+8),3,3,paint);
+            c.drawCircle(x,y+10,5,paint);
+            paint.setStyle(Paint.Style.FILL);c.drawCircle(x,y+10,2.4f,paint);
+        }
+        private void drawVoltage(Canvas c,float x,float y){
+            paint.setColor(GREEN);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(2.2f);
+            c.drawRoundRect(new RectF(x-10,y-7,x+10,y+7),2,2,paint);
+            c.drawRect(x-12,y-2,x-10,y+2,paint);
+            c.drawRect(x+10,y-2,x+12,y+2,paint);
+            paint.setStyle(Paint.Style.FILL);
+            line(c,GREEN,2,x-4,y,x+4,y);line(c,GREEN,2,x,y-4,x,y+4);
+        }
+        private void drawFuel(Canvas c,float x,float y){
+            paint.setColor(GREEN);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(2.2f);
+            c.drawRoundRect(new RectF(x-8,y-10,x+5,y+10),2,2,paint);
+            c.drawLine(x-8,y-4,x+5,y-4,paint);
+            Path p=new Path();p.moveTo(x+5,y-6);p.lineTo(x+12,y+1);
+            p.lineTo(x+12,y+10);c.drawPath(p,paint);
+            paint.setStyle(Paint.Style.FILL);
+        }
+        private void drawTelemetry(Canvas c){
+            // Values and labels use explicitly sized vector symbols: no missing
+            // Android glyphs, no cramped 9-point text.
+            drawThermometer(c,47,194);
+            txt(c,ZontClient.value(data==null?null:data.engineTemp,"°"),
+                    WHITE,22,91,196,Paint.Align.CENTER,true);
+            txt(c,"Двигатель",0xFFDBF3E1,12,90,214,Paint.Align.CENTER,true);
+            line(c,0xFF17602D,1,32,222,125,222);
+            drawThermometer(c,47,246);
+            txt(c,ZontClient.value(data==null?null:data.cabinTemp,"°"),
+                    WHITE,22,91,249,Paint.Align.CENTER,true);
+            txt(c,"Салон",0xFFDBF3E1,12,88,266,Paint.Align.CENTER,true);
+
+            drawVoltage(c,313,190);
+            txt(c,ZontClient.value(data==null?null:data.voltage,"В"),
+                    WHITE,20,340,210,Paint.Align.CENTER,true);
+            line(c,0xFF17602D,1,294,219,370,219);
+            drawFuel(c,315,242);
+            txt(c,ZontClient.value(data==null?null:data.fuelLiters," л"),
+                    WHITE,20,341,263,Paint.Align.CENTER,true);
+        }
+        private void drawSecurity(Canvas c){
+            boolean armed=data!=null && data.armedKnown && data.armed;
+            int border=data==null?0xFFFFB548:(data.armedKnown?GREEN:0xFFFFB548);
+            rect(c,0xFF082514,80,282,320,314,16);
+            paint.setStyle(Paint.Style.STROKE);paint.setColor(border);paint.setStrokeWidth(2);
+            c.drawRoundRect(new RectF(80,282,320,314),16,16,paint);
+            paint.setStyle(Paint.Style.FILL);
+            if(data==null) {
+                txt(c,"Подключить ZONT",0xFFFFFFFF,17,200,303,Paint.Align.CENTER,true);
+            } else {
+                String label=!data.armedKnown?"Нет данных охраны":armed?"Под охраной":"Охрана выключена";
+                txt(c,label,WHITE,label.length()>16?16:18,200,303,Paint.Align.CENTER,true);
+            }
+        }
+        private void drawAction(Canvas c,float x,float y,String type,boolean primary){
+            // Fits fully within the round screen: old centers at 106/294,y356
+            // plus radius 32 were clipped by the physical display.
+            float r=29;
+            paint.setShader(null);
+            paint.setColor(primary?0xFF074420:0xFF101C15);paint.setStyle(Paint.Style.FILL);
+            c.drawCircle(x,y,r,paint);
+            strokeOval(c,primary?GREEN:0xFF718E79,primary?2.7f:1.9f,
+                    x-r,y-r,x+r,y+r);
+            if(primary) {
+                drawEngine(c,x,y);
+            } else lockIconLarge(c,x,y,"ARM".equals(type));
+        }
+        private void lockIconLarge(Canvas c,float x,float y,boolean closed){
+            paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(3.2f);
+            paint.setColor(Color.WHITE);paint.setStrokeCap(Paint.Cap.ROUND);
+            c.drawRoundRect(new RectF(x-10,y-1,x+10,y+15),3,3,paint);
+            Path p=new Path();p.moveTo(x-6,y-1);p.lineTo(x-6,y-10);
+            p.cubicTo(x-6,y-20,x+6,y-20,x+6,y-10);
+            if(closed)p.lineTo(x+6,y-1);
+            else {p.lineTo(x+6,y-5);p.lineTo(x+13,y-8);}
+            c.drawPath(p,paint);paint.setStyle(Paint.Style.FILL);
+            c.drawCircle(x,y+6,2.1f,paint);
+        }
+        private void drawEngine(Canvas c,float x,float y){
+            // Engine pictogram drawn directly as a path, not font glyph ▣.
+            paint.setColor(GREEN);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(3.4f);
+            paint.setStrokeJoin(Paint.Join.ROUND);paint.setStrokeCap(Paint.Cap.ROUND);
+            Path p=new Path();
+            p.moveTo(x-17,y-7);p.lineTo(x-10,y-7);p.lineTo(x-7,y-13);
+            p.lineTo(x+8,y-13);p.lineTo(x+12,y-7);p.lineTo(x+17,y-7);
+            p.lineTo(x+17,y+12);p.lineTo(x-17,y+12);p.close();
+            c.drawPath(p,paint);
+            c.drawLine(x-8,y-16,x+4,y-16,paint);
+            c.drawLine(x-21,y-5,x-21,y+9,paint);
+            paint.setStyle(Paint.Style.FILL);
+        }
+
         private void drawHands(Canvas c,boolean dim){
-            // Hands rotate against local device time. Center placed over the vehicle image.
-            int hour=clock.get(Calendar.HOUR);int minute=clock.get(Calendar.MINUTE);int second=clock.get(Calendar.SECOND);
-            float hourDeg=(hour+minute/60f)*30f;
-            float minDeg=(minute+second/60f)*6f;
-            drawHand(c,hourDeg,60,8,dim?0xFF999999:0xFFD4FFF0);
-            drawHand(c,minDeg,91,5,dim?0xFF888888:0xFFB5FFC7);
-            if(!dim){drawHand(c,second*6f,98,1.5f,0xFFF33448);}
-            paint.setColor(dim?Color.WHITE:0xFFC3FFC9);c.drawCircle(200,216,5,paint);
-            paint.setColor(0xFF182119);c.drawCircle(200,216,2,paint);
+            // Slim realistic hands that do not obscure the car and telemetry.
+            int hour=clock.get(Calendar.HOUR);
+            int minute=clock.get(Calendar.MINUTE);
+            int second=clock.get(Calendar.SECOND);
+            drawHand(c,(hour+minute/60f)*30f,52,4.2f,
+                    dim?0xFFAAAAAA:0xFFDDFAE3);
+            drawHand(c,(minute+second/60f)*6f,81,3.1f,
+                    dim?0xFF999999:0xFFEEFFF1);
+            if(!dim)drawHand(c,second*6f,91,1.3f,0xFFF6424D);
+            paint.setShader(null);paint.setColor(0xFFD9F8E0);
+            c.drawCircle(200,227,5,paint);
+            paint.setColor(0xFF10251A);c.drawCircle(200,227,2,paint);
         }
-        private void drawHand(Canvas c,float angle,float length,float width,int color){
-            double a=Math.toRadians(angle-90);
-            float x=(float)(200+Math.cos(a)*length), y=(float)(216+Math.sin(a)*length);
-            line(c,0xFF0F2013,width+2,200,216,x,y);
-            line(c,color,width,200,216,x,y);
+        private void drawHand(Canvas c,float degrees,float length,float width,int color){
+            double angle=Math.toRadians(degrees-90);
+            float x=200+(float)Math.cos(angle)*length;
+            float y=227+(float)Math.sin(angle)*length;
+            line(c,0xFF142819,width+1.7f,200,227,x,y);
+            line(c,color,width,200,227,x,y);
         }
         private void drawAmbient(Canvas c){
             // Solid black background. Never show moving second hand or active icons.
@@ -243,25 +354,35 @@ public final class FaceService extends CanvasWatchFaceService {
             lockIcon(c,200,228,armed,0xFF999999);
             txt(c,armed?"Под охраной":"ZONT",0xFF9D9D9D,13,200,275,Paint.Align.CENTER,false);
         }
+
         @Override public void onTapCommand(int tapType,int x,int y,long eventTime){
             if(tapType!=WatchFaceService.TAP_TYPE_TAP||ambient)return;
-            // Coordinates in physical screen pixels, convert to 400 logical units.
             Rect b=getSurfaceHolder().getSurfaceFrame();
-            float size=Math.min(b.width(),b.height());if(size<=0)return;
+            float size=Math.min(b.width(),b.height());
+            if(size<=0)return;
             float lx=(x-(b.width()-size)/2f)*400/size;
             float ly=(y-(b.height()-size)/2f)*400/size;
-            if(ly<85||ly>375&&lx>140&&lx<260){
-                Intent i=new Intent(FaceService.this,ConfigActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            // Logo and the wide connection banner open real ZONT settings.
+            if((ly>=32&&ly<=73&&lx>156&&lx<254)||
+               (ly>=278&&ly<=316) || !api.store.configured()){
+                Intent i=new Intent(FaceService.this,ConfigActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 startActivity(i);return;
             }
-            if(ly>320&&ly<390){
-                String action=null;
-                if(lx>=68&&lx<145)action="ARM";
-                else if(lx>=161&&lx<239){action=data!=null&&data.engineKnown&&data.engineRunning?"STOP":"START";}
-                else if(lx>=258&&lx<337)action="DISARM";
-                if(action!=null){
-                    Intent i=new Intent(FaceService.this,ConfirmActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    i.putExtra("command",action);startActivity(i);
+            if(ly>=307&&ly<=378){
+                final float[] xs={125,200,275};
+                final String[] types={"ARM","ENGINE","DISARM"};
+                for(int j=0;j<xs.length;j++){
+                    float dx=lx-xs[j],dy=ly-341;
+                    if(dx*dx+dy*dy<=37*37){
+                        String action=types[j];
+                        if("ENGINE".equals(action))
+                            action=data!=null&&data.engineKnown&&data.engineRunning?"STOP":"START";
+                        Intent i=new Intent(FaceService.this,ConfirmActivity.class)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        i.putExtra("command",action);
+                        startActivity(i);return;
+                    }
                 }
             }
         }
