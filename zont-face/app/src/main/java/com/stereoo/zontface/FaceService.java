@@ -177,6 +177,9 @@ public final class FaceService extends CanvasWatchFaceService {
                 paint.setShader(null);paint.setColor(Color.WHITE);paint.setAlpha(255);
                 Rect src=new Rect(0,0,car.getWidth(),car.getHeight());
                 c.drawBitmap(car,src,new RectF(91,165,309,282),paint);
+                // Russian plate customized to the owner's real 2005 XL7.
+                rect(c,0xFFF2F2F2,119,235,169,246,1.4f);
+                txt(c,"X125XP 22",Color.BLACK,7.2f,143.5f,243.3f,Paint.Align.CENTER,true);
             }
             // Left telemetry.
             txt(c,"♨",GREEN,17,38,191,Paint.Align.CENTER,true);
