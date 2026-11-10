@@ -476,5 +476,5 @@ public final class FaceService extends CanvasWatchFaceService {
             }
         }
 
-            }
+    }
 }
